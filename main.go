@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -16,7 +17,6 @@ import (
 )
 
 var (
-	// Initialize gorm DB
 	gormDB, _ = gorm.Open("sqlite3", "sample.db")
 )
 
@@ -29,6 +29,12 @@ var (
 	}
 	oauthStateString = "random per user"
 )
+
+type GithubUserDTO struct {
+	Login string `json:login`
+	Id    int    `json:id`
+	Name  string `json:name`
+}
 
 func handleMain(w http.ResponseWriter, r *http.Request) {
 	// TODO reverse proxy everything else, probably requires wildcard matching or something
@@ -78,12 +84,13 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = ioutil.WriteFile("response.raw", contents, 0644)
-	if err != nil {
-		panic(err)
+	var userDTO GithubUserDTO
+	if err := json.Unmarshal(contents, &userDTO); err != nil {
+		log.Print("Could not unmarshal contents! %v", contents)
+		return
 	}
 
-	log.Print(w, "Content: %s\n", contents)
+	log.Printf("Saw user DTO values %v, %v, %v", userDTO.Login, userDTO.Id, userDTO.Name)
 }
 
 func main() {
