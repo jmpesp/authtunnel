@@ -36,6 +36,14 @@ type GithubUserDTO struct {
 	Name  string `json:name`
 }
 
+type User struct {
+	gorm.Model
+	OAuth2Provider string
+	ExternalId     int
+	Name           string
+	Login          string
+}
+
 func handleMain(w http.ResponseWriter, r *http.Request) {
 	// TODO reverse proxy everything else, probably requires wildcard matching or something
 }
@@ -91,9 +99,20 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Saw user DTO values %v, %v, %v", userDTO.Login, userDTO.Id, userDTO.Name)
+
+	u := User{
+		OAuth2Provider: "Github",
+		ExternalId:     userDTO.Id,
+		Name:           userDTO.Name,
+		Login:          userDTO.Login,
+	}
+
+	gormDB.Save(&u)
 }
 
 func main() {
+	gormDB.AutoMigrate(&User{})
+
 	http.HandleFunc("/", handleMain)
 	http.HandleFunc("/login/", handleLogin)
 	http.HandleFunc("/callback/", handleCallback)
