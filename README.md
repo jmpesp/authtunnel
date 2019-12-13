@@ -5,9 +5,9 @@ an in-band authentication tunnel.
 
 Navigate to https://github.com/settings/applications/new and set:
 
-application name: authtunnel
-homepage url: http://localhost:12345
-callback url: http://localhost:12345/login/callback
+    application name: authtunnel
+    homepage url: http://localhost:12345
+    callback url: http://localhost:12345/login/callback
 
 From this, get a client ID and secret for testing purposes.
 
