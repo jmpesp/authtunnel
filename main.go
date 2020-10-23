@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"io/ioutil"
 	"log"
@@ -36,16 +38,41 @@ type GithubUserDTO struct {
 	Name  string `json:name`
 }
 
+type BearerTokenDTO struct {
+	Token string `json:token`
+}
+
 type User struct {
 	gorm.Model
+
 	OAuth2Provider string
 	ExternalId     int
 	Name           string
 	Login          string
+	BearerToken    string
+}
+
+func GenerateRandomBytes(n int) ([]byte, error) {
+	b := make([]byte, n)
+	_, err := rand.Read(b)
+	// Note that err == nil only if we read len(b) bytes.
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func GenerateRandomString(s int) string {
+	b, err := GenerateRandomBytes(s)
+	if err != nil {
+		panic(err)
+	}
+	return base64.URLEncoding.EncodeToString(b)
 }
 
 func handleMain(w http.ResponseWriter, r *http.Request) {
 	// TODO reverse proxy everything else, probably requires wildcard matching or something
+	// TODO check for Bearer token on call, and decorate call with user information if found
 }
 
 func handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -105,9 +132,26 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		ExternalId:     userDTO.Id,
 		Name:           userDTO.Name,
 		Login:          userDTO.Login,
+		BearerToken:    GenerateRandomString(64),
 	}
 
-	gormDB.Save(&u)
+	tx := gormDB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		} else {
+			tx.Commit()
+		}
+	}()
+
+	b := BearerTokenDTO{
+		Token: u.BearerToken,
+	}
+
+	tx.Save(&u)
+	w.WriteHeader(http.StatusOK)
+	w.Header().Add("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(b)
 }
 
 func main() {
