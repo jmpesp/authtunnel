@@ -4,10 +4,14 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
+	"strings"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
@@ -70,9 +74,73 @@ func GenerateRandomString(s int) string {
 	return base64.URLEncoding.EncodeToString(b)
 }
 
+func getBearerTokenFromRequest(r *http.Request) (string, error) {
+	auth := r.Header.Get("Authorization")
+	if len(auth) == 0 {
+		return "", fmt.Errorf("no Authorization header")
+	}
+
+	bearer_slice := strings.Split(auth, " ")
+	if len(bearer_slice) != 2 {
+		return "", fmt.Errorf("malformed Authorization header")
+	}
+
+	bearer_key, bearer_value := bearer_slice[0], bearer_slice[1]
+	if strings.ToLower(bearer_key) != "bearer" {
+		return "", fmt.Errorf("malformed Bearer section")
+	}
+
+	return bearer_value, nil
+}
+
 func handleMain(w http.ResponseWriter, r *http.Request) {
-	// TODO reverse proxy everything else, probably requires wildcard matching or something
-	// TODO check for Bearer token on call, and decorate call with user information if found
+	// check for valid bearer token
+	bearer_token, err := getBearerTokenFromRequest(r)
+	if err != nil {
+		log.Printf("handleMain error " + err.Error())
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	// check for a user corresponding to that bearer token
+	tx := gormDB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		} else {
+			tx.Commit()
+		}
+	}()
+
+	var u User
+	u.BearerToken = bearer_token
+
+	tx.First(&u)
+
+	if u.ExternalId == 0 {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("401 Unauthorized"))
+		return
+	}
+
+	if u.BearerToken != bearer_token {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("401 Unauthorized"))
+		return
+	}
+
+	// past here, the user is valid
+	upstream := "http://127.0.0.1:12345"
+	url, _ := url.Parse(upstream)
+	proxy := httputil.NewSingleHostReverseProxy(url)
+
+	r.URL.Host = url.Host
+	r.URL.Scheme = url.Scheme
+	r.Host = url.Host
+
+	r.Header.Set("X-AuthTunnel-ExternalId", fmt.Sprintf("%v", u.ExternalId))
+
+	proxy.ServeHTTP(w, r)
 }
 
 func handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -80,14 +148,14 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	oauthStateString = uniuri.NewLen(32)
 	url := oauthConfig.AuthCodeURL(oauthStateString)
 	log.Print("redirecting to " + url)
-	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+	http.Redirect(w, r, url, http.StatusFound)
 }
 
 func handleCallback(w http.ResponseWriter, r *http.Request) {
 	state := r.FormValue("state")
 	if state != oauthStateString {
 		log.Print("invalid oauth state, expected '%s', got '%s'\n", oauthStateString, state)
-		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 
@@ -95,7 +163,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	token, err := oauthConfig.Exchange(oauth2.NoContext, code) // TODO: no context?
 	if err != nil {
 		log.Print("Code exchange failed with '%s'\n", err)
-		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 
@@ -108,14 +176,14 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Print("Error on response: ", err)
-		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 
 	contents, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Print("could not read all of resp.Body!")
-		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 
@@ -127,14 +195,6 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Saw user DTO values %v, %v, %v", userDTO.Login, userDTO.Id, userDTO.Name)
 
-	u := User{
-		OAuth2Provider: "Github",
-		ExternalId:     userDTO.Id,
-		Name:           userDTO.Name,
-		Login:          userDTO.Login,
-		BearerToken:    GenerateRandomString(64),
-	}
-
 	tx := gormDB.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -143,6 +203,22 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 			tx.Commit()
 		}
 	}()
+
+	var u User
+
+	tx.First(&u, "externalid = ?", userDTO.Id)
+	if u.ExternalId != userDTO.Id {
+		log.Printf("Creating new user entry")
+		u = User{
+			OAuth2Provider: "Github",
+			ExternalId:     userDTO.Id,
+			Name:           userDTO.Name,
+			Login:          userDTO.Login,
+			BearerToken:    GenerateRandomString(64),
+		}
+	} else {
+		log.Printf("Pulled existing user entry")
+	}
 
 	b := BearerTokenDTO{
 		Token: u.BearerToken,
