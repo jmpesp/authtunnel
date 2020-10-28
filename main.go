@@ -93,15 +93,7 @@ func getBearerTokenFromRequest(r *http.Request) (string, error) {
 	return bearer_value, nil
 }
 
-func handleMain(w http.ResponseWriter, r *http.Request) {
-	// check for valid bearer token
-	bearer_token, err := getBearerTokenFromRequest(r)
-	if err != nil {
-		log.Printf("handleMain error " + err.Error())
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
-
+func getUserForValidBearerToken(bearer_token string) (*User, error) {
 	// check for a user corresponding to that bearer token
 	tx := gormDB.Begin()
 	defer func() {
@@ -112,24 +104,40 @@ func handleMain(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	var u User
+	var u *User = &User{}
 	u.BearerToken = bearer_token
 
-	tx.First(&u)
+	tx.First(u)
 
 	if u.ExternalId == 0 {
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte("401 Unauthorized"))
-		return
+		return nil, fmt.Errorf("no user")
 	}
 
 	if u.BearerToken != bearer_token {
+		return nil, fmt.Errorf("no user")
+	}
+
+	return u, nil
+}
+
+func handleMain(w http.ResponseWriter, r *http.Request) {
+	// check for valid bearer token, get user
+	bearer_token, err := getBearerTokenFromRequest(r)
+	if err != nil {
+		log.Printf("handleMain error " + err.Error())
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	u, err := getUserForValidBearerToken(bearer_token)
+
+	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte("401 Unauthorized"))
 		return
 	}
 
-	// past here, the user is valid
+	// past here, the user is valid - proxy
 	upstream := "http://127.0.0.1:12345"
 	url, _ := url.Parse(upstream)
 	proxy := httputil.NewSingleHostReverseProxy(url)
@@ -141,6 +149,33 @@ func handleMain(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set("X-AuthTunnel-ExternalId", fmt.Sprintf("%v", u.ExternalId))
 
 	proxy.ServeHTTP(w, r)
+}
+
+func handleWhoami(w http.ResponseWriter, r *http.Request) {
+	// check for valid bearer token, get user
+	bearer_token, err := getBearerTokenFromRequest(r)
+	if err != nil {
+		log.Printf("handleMain error " + err.Error())
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	u, err := getUserForValidBearerToken(bearer_token)
+
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("401 Unauthorized"))
+		return
+	}
+
+	result, err := json.Marshal(u)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("bad marshal!"))
+		return
+	}
+
+	w.Write(result)
 }
 
 func handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -234,6 +269,7 @@ func main() {
 	gormDB.AutoMigrate(&User{})
 
 	http.HandleFunc("/", handleMain)
+	http.HandleFunc("/whoami", handleWhoami)
 	http.HandleFunc("/login/", handleLogin)
 	http.HandleFunc("/callback/", handleCallback)
 
