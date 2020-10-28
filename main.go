@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -18,8 +19,6 @@ import (
 
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/sqlite"
-
-	"github.com/dchest/uniuri"
 )
 
 var (
@@ -33,7 +32,6 @@ var (
 		ClientSecret: os.Getenv("OAUTH2_CLIENT_SECRET"),
 		Endpoint:     github.Endpoint,
 	}
-	oauthStateString = "random per user"
 )
 
 type GithubUserDTO struct {
@@ -180,15 +178,30 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	w.Write(result)
 }
 
+func oauthStateStringFromRequest(r *http.Request) string {
+	hash := sha256.New()
+
+	hash.Write([]byte(r.Header.Get("User-Agent")))
+
+	for _, cookie := range r.Cookies() {
+		hash.Write([]byte(cookie.Name))
+		hash.Write([]byte(cookie.Value))
+	}
+
+	return fmt.Sprintf("%x", hash.Sum(nil))
+}
+
 func handleLogin(w http.ResponseWriter, r *http.Request) {
-	// TODO needs to actually be random per user
-	oauthStateString = uniuri.NewLen(32)
+	oauthStateString := oauthStateStringFromRequest(r)
+	log.Print("computed oauthStateString as " + oauthStateString)
+
 	url := oauthConfig.AuthCodeURL(oauthStateString)
 	log.Print("redirecting to " + url)
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
 func handleCallback(w http.ResponseWriter, r *http.Request) {
+	oauthStateString := oauthStateStringFromRequest(r)
 	state := r.FormValue("state")
 	if state != oauthStateString {
 		log.Print("invalid oauth state, expected '%s', got '%s'\n", oauthStateString, state)
@@ -243,7 +256,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	var u User
 
-	tx.First(&u, "externalid = ?", userDTO.Id)
+	tx.First(&u, "external_id = ?", userDTO.Id)
 	if u.ExternalId != userDTO.Id {
 		log.Printf("Creating new user entry")
 		u = User{
