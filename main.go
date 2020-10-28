@@ -147,6 +147,8 @@ func handleMain(w http.ResponseWriter, r *http.Request) {
 	r.Host = url.Host
 
 	r.Header.Set("X-AuthTunnel-ExternalId", fmt.Sprintf("%v", u.ExternalId))
+	r.Header.Set("X-AuthTunnel-Name", fmt.Sprintf("%v", u.Name))
+	r.Header.Set("X-AuthTunnel-Login", fmt.Sprintf("%v", u.Login))
 
 	proxy.ServeHTTP(w, r)
 }
