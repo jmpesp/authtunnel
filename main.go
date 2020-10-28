@@ -144,6 +144,7 @@ func handleMain(w http.ResponseWriter, r *http.Request) {
 	r.URL.Scheme = url.Scheme
 	r.Host = url.Host
 
+	r.Header.Set("X-AuthTunnel-OAuth2Provider", fmt.Sprintf("%v", u.OAuth2Provider))
 	r.Header.Set("X-AuthTunnel-ExternalId", fmt.Sprintf("%v", u.ExternalId))
 	r.Header.Set("X-AuthTunnel-Name", fmt.Sprintf("%v", u.Name))
 	r.Header.Set("X-AuthTunnel-Login", fmt.Sprintf("%v", u.Login))
