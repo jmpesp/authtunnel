@@ -20,4 +20,3 @@ Also, set `REDIRECT_URL` to whatever port / external URL you're using and the `/
 
 Then run `./authtunnel`.
 
-BEARER TOWN
